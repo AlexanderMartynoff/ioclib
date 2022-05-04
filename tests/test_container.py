@@ -7,6 +7,14 @@ class ServiceLookupError:
     pass
 
 
+class ServiceClosable:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
 class ServiceB:
     pass
 
@@ -29,25 +37,32 @@ class ServiceA:
 di = Container()
 
 
+@di.define('context')
+def closable_service() -> ServiceClosable:
+    service = ServiceClosable()
+    yield service
+    service.close()
+
+
 @di.define('singleton')
 def c_service() -> ServiceC:
-    return ServiceC()
+    yield ServiceC()
 
 
 @di.define('context')
 def b_service() -> ServiceB:
-    return ServiceB()
+    yield ServiceB()
 
 
 @di.define('singleton')
 def square_service() -> ServiceSquare:
-    return ServiceSquare()
+    yield ServiceSquare()
 
 
 @di.define('context')
 @di.injectable
 def a_service(b_service: ServiceB = injection()) -> ServiceA:
-    return ServiceA(b_service)
+    yield ServiceA(b_service)
 
 
 def test_single():
@@ -138,5 +153,17 @@ def test_without_injectable():
 
     service_c = get_service_c()
 
-    with pytest.raises(TypeError):
+    with pytest.raises(AttributeError):
         service_c.do()
+
+
+def test_container_root():
+    @di.root
+    @di.injectable
+    def enter(service: ServiceClosable = injection()):
+        assert not service.closed
+        return service
+
+    service = enter()
+
+    assert service.closed
