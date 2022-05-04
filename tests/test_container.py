@@ -1,5 +1,5 @@
 import pytest
-from contextvars import copy_context, Context
+from contextvars import Context
 from dipy import Container, injection
 
 
@@ -12,7 +12,13 @@ class ServiceB:
 
 
 class ServiceC:
-    pass
+    def do(self):
+        pass
+
+
+class ServiceSquare:
+    def square(self, value):
+        return value ** 2
 
 
 class ServiceA:
@@ -33,13 +39,18 @@ def b_service() -> ServiceB:
     return ServiceB()
 
 
+@di.define('singleton')
+def square_service() -> ServiceSquare:
+    return ServiceSquare()
+
+
 @di.define('context')
 @di.injectable
 def a_service(b_service: ServiceB = injection()) -> ServiceA:
     return ServiceA(b_service)
 
 
-def test_injection():
+def test_single():
     @di.injectable
     def get_service_a(service_a: ServiceA = injection()):
         return service_a
@@ -50,7 +61,7 @@ def test_injection():
     assert isinstance(service_a.service_b, ServiceB)
 
 
-def test_injections():
+def test_multiple():
     @di.injectable
     def get_service_a_and_b(service_a: ServiceA = injection(), service_b: ServiceB = injection()):
         return service_a, service_b
@@ -61,7 +72,7 @@ def test_injections():
     assert isinstance(service_b, ServiceB)
 
 
-def test_lookup_error_injection():
+def test_lookup_error():
     @di.injectable
     def get_service_lookup_error(service_lookup_error: ServiceLookupError = injection()):
         return service_lookup_error
@@ -70,7 +81,7 @@ def test_lookup_error_injection():
         get_service_lookup_error()
 
 
-def test_context_injection():
+def test_context():
     @di.injectable
     def main(service_a: ServiceA = injection()):
         return service_a
@@ -96,7 +107,7 @@ def test_context_injection():
     assert service_a_1.service_b is service_a_2.service_b
 
 
-def test_context_singleton_injection():
+def test_context_singleton():
     @di.injectable
     def main(service_c: ServiceC = injection()):
         return service_c
@@ -111,3 +122,21 @@ def test_context_singleton_injection():
     assert isinstance(service_c_1, ServiceC)
 
     assert service_c_1 is service_c_2
+
+
+def test_with_arguments():
+    @di.injectable
+    def square(value, service_square: ServiceSquare = injection()):
+        return service_square.square(value)
+
+    assert square(3) == 9
+
+
+def test_without_injectable():
+    def get_service_c(service_c: ServiceC = injection()):
+        return service_c
+
+    service_c = get_service_c()
+
+    with pytest.raises(TypeError):
+        service_c.do()

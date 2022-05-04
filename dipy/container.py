@@ -1,4 +1,4 @@
-from typing import Any, Optional, Callable, Type, TypeVar, Tuple, List, Union, cast
+from typing import Any, Optional, Callable, Type, TypeVar, List, cast
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
@@ -73,6 +73,8 @@ class Container:
                 return definition
 
     def define(self, scope: Literal['context', 'singleton']) -> Callable[[Callable[P, T]], Callable[P, T]]:
+        assert scope in ['context', 'singleton']
+
         def definer(function: Callable[P, T]) -> Callable[P, T]:
 
             if scope == 'context':
@@ -157,11 +159,11 @@ class Injector:
 
 class Injection:
     def __init__(self, name, cls):
-        self._name = name
-        self._cls = cls
+        self.__name__ = name
+        self.__cls__ = cls
 
     def __getattr__(self, name):
-        raise AttributeError()
+        raise TypeError()
 
 
 def injection(name: Optional[str] = None, cls=None) -> Any:
