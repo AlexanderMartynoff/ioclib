@@ -1,6 +1,6 @@
 import pytest
 from contextvars import Context
-from dipy import Container, Injection, injection
+from ioclib import Container, Injection, injection
 
 
 class ClosableService:
