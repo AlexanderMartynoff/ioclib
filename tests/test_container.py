@@ -218,7 +218,7 @@ def test_context_container_enter_injection():
         return closable_service
 
     def main():
-        with cr.enter(['context']):
+        with cr.run(['context']):
             closable_service = get_closable_service()
             assert not closable_service.closed
 
@@ -235,5 +235,34 @@ def test_context_container_enter_injection():
 
         assert relove_count == 1
         assert release_count == 1
+
+    main()
+
+
+def test_container_error_handle_injection():
+    cr = Container()
+
+    @cr.define('context')
+    def closable_service() -> ClosableService:
+        service = ClosableService()
+
+        try:
+            yield service
+        finally:
+            service.close()
+
+    @cr.injectable
+    def get_closable_service(closable_service: ClosableService = injection()) -> ClosableService:
+        return closable_service
+
+    def main():
+        try:
+            with cr.run():
+                closable_service = get_closable_service()
+                raise RuntimeError()
+        except Exception:
+            pass
+
+        assert closable_service.closed
 
     main()

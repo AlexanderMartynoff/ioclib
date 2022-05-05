@@ -1,4 +1,4 @@
-from typing import Any, Optional, Callable, Type, TypeVar, List, cast
+from typing import Any, Optional, Callable, Type, TypeVar, List, ContextManager, cast
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
@@ -14,14 +14,14 @@ T = TypeVar('T')
 @dataclass
 class _Definition:
     signature: Signature
-    factory: Callable[..., Any]
+    factory: Callable[..., ContextManager]
     scope: str
     name: str
 
     def enter(self):
         raise NotImplementedError()
 
-    def exit(self):
+    def exit(self, error, error_type, tb):
         raise NotImplementedError()
 
     def get(self):
@@ -42,8 +42,11 @@ class _InstanceDefinition(_Definition):
         self._manager = manager
         self._instance = manager.__enter__()
 
-    def exit(self):
-        self._manager.__exit__(None, None, None)
+    def exit(self, error, error_type, tb):
+        if not self._manager:
+            raise RuntimeError()
+
+        self._manager.__exit__(error_type, error, tb)
         self._manager = None
         self._instance = None
 
@@ -53,8 +56,8 @@ class _InstanceDefinition(_Definition):
 
 @dataclass
 class _ContextDefinition(_Definition):
-    _manager_var: ContextVar = field(init=False)
-    _instance_var: ContextVar = field(init=False)
+    _manager_var: ContextVar[ContextManager] = field(init=False)
+    _instance_var: ContextVar[Any] = field(init=False)
 
     def __post_init__(self):
         self._instance_var = ContextVar(
@@ -68,11 +71,13 @@ class _ContextDefinition(_Definition):
         self._manager_var.set(manager)
         self._instance_var.set(manager.__enter__())
 
-    def exit(self):
+    def exit(self, error, error_type, tb):
         manager = self._manager_var.get()
 
-        if manager:
-            manager.__exit__(None, None, None)
+        if not manager:
+            raise RuntimeError()
+
+        manager.__exit__(error_type, error, tb)
 
         self._manager_var.set(None)
         self._instance_var.set(None)
@@ -117,19 +122,23 @@ class Container:
 
         return definer
 
-    def release(self, scopes):
+    def release(self, scopes, error, error_type, tb):
         for definition in self._definitions:
             if definition.scope in scopes:
-                definition.exit()
+                definition.exit(error, error_type, tb)
 
     @contextmanager
-    def enter(self, scopes=None):
-        if not scopes:
-            raise TypeError()
+    def run(self, release_scopes=None):
+        if not release_scopes:
+            release_scopes = ['context', 'singleton']
 
-        yield
-
-        self.release(scopes)
+        try:
+            yield
+        except Exception as error:
+            self.release(release_scopes, error, type(error), None)
+            raise
+        else:
+            self.release(release_scopes, None, None, None)
 
     def get(self, cls: Type[T], name=None) -> T:
         definition = self._get_definition(cls, name)
@@ -190,7 +199,7 @@ class Injection:
     __cls: Type[Any]
 
     def __getattr__(self, name: str) -> Any:
-        raise TypeError()
+        raise TypeError('Probably you forget `@injectable` decorator for callable function')
 
 
 def injection(name: Optional[str] = None, cls=None) -> Any:
