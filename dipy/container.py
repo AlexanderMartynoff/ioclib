@@ -1,8 +1,8 @@
-from typing import Any, Optional, Callable, Type, TypeVar, List, cast, ContextManager
+from typing import Any, Optional, Callable, Type, TypeVar, List, cast
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
-from contextvars import copy_context, ContextVar
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from contextlib import contextmanager
 
@@ -30,6 +30,7 @@ class _Definition:
     @property
     def cls(self):
         return self.signature.return_annotation
+
 
 @dataclass
 class _InstanceDefinition(_Definition):
@@ -89,7 +90,7 @@ class Container:
             if issubclass(definition.signature.return_annotation, cls) and definition.name == name:
                 return definition
 
-    def define(self, scope: Literal['context', 'singleton']) -> Callable[[Callable[P, T]], Callable[P, T]]:
+    def define(self, scope: Literal['context', 'singleton'], name=None) -> Callable[[Callable[P, T]], Callable[P, T]]:
         assert scope in ['context', 'singleton']
 
         def definer(function: Callable[P, T]) -> Callable[P, T]:
@@ -101,7 +102,7 @@ class Container:
                     signature=signature,
                     factory=factory,
                     scope=scope,
-                    name=None,
+                    name=name,
                 ))
 
             elif scope == 'singleton':
@@ -109,17 +110,26 @@ class Container:
                     signature=signature,
                     factory=factory,
                     scope=scope,
-                    name=None,
+                    name=name,
                 ))
 
             return function
 
         return definer
 
-    def exit(self, scope):
+    def release(self, scopes):
         for definition in self._definitions:
-            if definition.scope == scope:
+            if definition.scope in scopes:
                 definition.exit()
+
+    @contextmanager
+    def enter(self, scopes=None):
+        if not scopes:
+            raise TypeError()
+
+        yield
+
+        self.release(scopes)
 
     def get(self, cls: Type[T], name=None) -> T:
         definition = self._get_definition(cls, name)
@@ -132,26 +142,13 @@ class Container:
 
         return cast(T, definition.get())
 
-    def root(self, function: Callable[P, T]) -> Callable[P, T]:
-        ''' Run `function` in new context, and close all closable definitions after call end '''
-
-        def rootify(*args: Any, **kwargs: Any) -> T:
-            try:
-                return function(*args, **kwargs)
-            except Exception:
-                raise
-            finally:
-                self.exit('context')
-
-        return partial(copy_context().run, rootify)
-
     def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
         return update_wrapper(Injector(self, function), function)
 
 
 class Injector:
-    def __init__(self, di: Container, function: Callable[P, T]):
-        self._di = di
+    def __init__(self, cr: Container, function: Callable[P, T]):
+        self._cr = cr
         self._function = function
         self._requires = []
         self._signature = get_signature(function, eval_str=True)
@@ -179,7 +176,7 @@ class Injector:
                     pass
 
             if arg is Parameter.empty:
-                kwargs[parameter.name] = self._di.get(parameter.annotation)
+                kwargs[parameter.name] = self._cr.get(parameter.annotation)
 
         return self._function(*args, **kwargs)
 
@@ -189,8 +186,11 @@ class Injector:
 
 @dataclass(frozen=True)
 class Injection:
-    name: str
-    cls: Type[Any]
+    __name: str
+    __cls: Type[Any]
+
+    def __getattr__(self, name: str) -> Any:
+        raise TypeError()
 
 
 def injection(name: Optional[str] = None, cls=None) -> Any:

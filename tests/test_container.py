@@ -1,13 +1,9 @@
 import pytest
 from contextvars import Context
-from dipy import Container, injection
+from dipy import Container, Injection, injection
 
 
-class ServiceLookupError:
-    pass
-
-
-class ServiceClosable:
+class ClosableService:
     def __init__(self):
         self.closed = False
 
@@ -15,155 +11,229 @@ class ServiceClosable:
         self.closed = True
 
 
-class ServiceB:
+class UndefinedService:
     pass
 
 
-class ServiceC:
-    def do(self):
+class BreezeService:
+    def __init__(self, breeze):
+        self.breeze = breeze
+
+
+class TemperatureService:
+    def __init__(self, temperature):
+        self.temperature = temperature
+
+
+class WeatherService:
+    def __init__(self, temperature_service: TemperatureService, breeze_service: BreezeService):
+        self.temperature_service = temperature_service
+        self.breeze_service = breeze_service
+
+
+def test_singleton_injection():
+    cr = Container()
+
+    @cr.define('singleton')
+    def def_temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
+
+
+    @cr.injectable
+    def main(temperature_service: TemperatureService = injection()):
+        assert isinstance(temperature_service, TemperatureService)
+
+    main()
+
+
+def test_singleton_multuple_injection():
+    cr = Container()
+
+    @cr.define('singleton')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
+
+    @cr.define('singleton')
+    def breeze_service() -> BreezeService:
+        yield BreezeService(0)
+
+
+    @cr.injectable
+    def main(temperature_service: TemperatureService = injection(),
+             breeze_service: BreezeService = injection()):
+
+        assert isinstance(temperature_service, TemperatureService)
+        assert isinstance(breeze_service, BreezeService)
+
+    main()
+
+
+def test_singleton_recursion_injection():
+    cr = Container()
+
+    @cr.define('singleton')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
+
+    @cr.define('singleton')
+    def breeze_service() -> BreezeService:
+        yield BreezeService(0)
+
+    @cr.define('singleton')
+    @cr.injectable
+    def weather_service(temperature_service: TemperatureService = injection(),
+                        breeze_service: BreezeService = injection()) -> WeatherService:
+        yield WeatherService(temperature_service, breeze_service)
+
+
+    @cr.injectable
+    def main(weather_service: WeatherService = injection()):
+        assert isinstance(weather_service, WeatherService)
+
+        assert isinstance(weather_service.breeze_service, BreezeService)
+        assert isinstance(weather_service.temperature_service, TemperatureService)
+
+    main()
+
+
+def test_lookup_error_injection():
+    cr = Container()
+
+    @cr.injectable
+    def main(undefined_service: UndefinedService = injection()):
         pass
 
-
-class ServiceSquare:
-    def square(self, value):
-        return value ** 2
-
-
-class ServiceA:
-    def __init__(self, b_service: ServiceB):
-        self.service_b = b_service
-
-
-di = Container()
-
-
-@di.define('context')
-def closable_service() -> ServiceClosable:
-    service = ServiceClosable()
-    yield service
-    service.close()
-
-
-@di.define('singleton')
-def c_service() -> ServiceC:
-    yield ServiceC()
-
-
-@di.define('context')
-def b_service() -> ServiceB:
-    yield ServiceB()
-
-
-@di.define('singleton')
-def square_service() -> ServiceSquare:
-    yield ServiceSquare()
-
-
-@di.define('context')
-@di.injectable
-def a_service(b_service: ServiceB = injection()) -> ServiceA:
-    yield ServiceA(b_service)
-
-
-def test_single():
-    @di.injectable
-    def get_service_a(service_a: ServiceA = injection()):
-        return service_a
-
-    service_a = get_service_a()
-
-    assert isinstance(service_a, ServiceA)
-    assert isinstance(service_a.service_b, ServiceB)
-
-
-def test_multiple():
-    @di.injectable
-    def get_service_a_and_b(service_a: ServiceA = injection(), service_b: ServiceB = injection()):
-        return service_a, service_b
-
-    service_a, service_b = get_service_a_and_b()
-
-    assert isinstance(service_a, ServiceA)
-    assert isinstance(service_b, ServiceB)
-
-
-def test_lookup_error():
-    @di.injectable
-    def get_service_lookup_error(service_lookup_error: ServiceLookupError = injection()):
-        return service_lookup_error
-
     with pytest.raises(LookupError):
-        get_service_lookup_error()
+        main()
 
 
-def test_context():
-    @di.injectable
-    def main(service_a: ServiceA = injection()):
-        return service_a
+def test_without_injectable_injection():
+    def main(undefined_service: UndefinedService = injection()):
+        assert isinstance(undefined_service, Injection)
 
-    context_1 = Context()
-    context_2 = Context()
-
-    service_a_1 = context_1.run(main)
-    service_a_2 = context_2.run(main)
-
-    assert isinstance(service_a_1, ServiceA)
-    assert isinstance(service_a_2, ServiceA)
-
-    assert service_a_1 is not service_a_2
-    assert service_a_1.service_b is not service_a_2.service_b
-
-    context_3 = Context()
-
-    service_a_1 = context_3.run(main)
-    service_a_2 = context_3.run(main)
-
-    assert service_a_1 is service_a_2
-    assert service_a_1.service_b is service_a_2.service_b
+    main()
 
 
-def test_context_singleton():
-    @di.injectable
-    def main(service_c: ServiceC = injection()):
-        return service_c
+def test_context_injection():
+    cr = Container()
 
-    context_1 = Context()
-    context_2 = Context()
+    @cr.define('context')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
 
-    service_c_1 = context_1.run(main)
-    service_c_2 = context_2.run(main)
+    @cr.injectable
+    def main(temperature_service: TemperatureService = injection()):
+        assert isinstance(temperature_service, TemperatureService)
 
-    assert isinstance(service_c_1, ServiceC)
-    assert isinstance(service_c_1, ServiceC)
-
-    assert service_c_1 is service_c_2
+    main()
 
 
-def test_with_arguments():
-    @di.injectable
-    def square(value, service_square: ServiceSquare = injection()):
-        return service_square.square(value)
+def test_context_multiple_injection():
+    cr = Container()
 
-    assert square(3) == 9
+    @cr.define('context')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
 
-
-def test_without_injectable():
-    def get_service_c(service_c: ServiceC = injection()):
-        return service_c
-
-    service_c = get_service_c()
-
-    with pytest.raises(AttributeError):
-        service_c.do()
+    @cr.define('context')
+    def breeze_service() -> BreezeService:
+        yield BreezeService(0)
 
 
-def test_container_root():
-    @di.root
-    @di.injectable
-    def enter(service: ServiceClosable = injection()):
-        assert not service.closed
-        return service
+    @cr.injectable
+    def main(temperature_service: TemperatureService = injection(),
+             breeze_service: BreezeService = injection()):
 
-    service = enter()
+        assert isinstance(temperature_service, TemperatureService)
+        assert isinstance(breeze_service, BreezeService)
 
-    assert service.closed
+    main()
+
+
+def test_context_recursion_injection():
+    cr = Container()
+
+    @cr.define('context')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
+
+    @cr.define('context')
+    def breeze_service() -> BreezeService:
+        yield BreezeService(0)
+
+    @cr.define('context')
+    @cr.injectable
+    def weather_service(temperature_service: TemperatureService = injection(),
+                        breeze_service: BreezeService = injection()) -> WeatherService:
+        yield WeatherService(temperature_service, breeze_service)
+
+
+    @cr.injectable
+    def main(weather_service: WeatherService = injection()):
+        assert isinstance(weather_service, WeatherService)
+
+        assert isinstance(weather_service.breeze_service, BreezeService)
+        assert isinstance(weather_service.temperature_service, TemperatureService)
+
+    main()
+
+
+def test_context_with_multiple_context_injection():
+    cr = Container()
+
+    @cr.define('context')
+    def temperature_service() -> TemperatureService:
+        yield TemperatureService(0)
+
+    @cr.injectable
+    def get_temperature_service(temperature_service: TemperatureService = injection()):
+        return temperature_service
+
+    assert Context().run(get_temperature_service) is not Context().run(get_temperature_service)
+
+    context = Context()
+    assert context.run(get_temperature_service) is context.run(get_temperature_service)
+
+
+def test_context_container_enter_injection():
+    cr = Container()
+
+    relove_count = 0
+    release_count = 0
+
+    @cr.define('context')
+    def closable_service() -> ClosableService:
+        nonlocal relove_count, release_count
+
+        relove_count += 1
+        service = ClosableService()
+
+        yield service
+
+        release_count += 1
+        service.close()
+
+    @cr.injectable
+    def get_closable_service(closable_service: ClosableService = injection()) -> ClosableService:
+        return closable_service
+
+    def main():
+        with cr.enter(['context']):
+            closable_service = get_closable_service()
+            assert not closable_service.closed
+
+            assert relove_count == 1
+            assert release_count == 0
+
+            closable_service = get_closable_service()
+            assert not closable_service.closed
+
+            assert relove_count == 1
+            assert release_count == 0
+
+        assert closable_service.closed
+
+        assert relove_count == 1
+        assert release_count == 1
+
+    main()
