@@ -1,11 +1,11 @@
-from typing import Any, Optional, Callable, Type, TypeVar, List, ContextManager, cast
+from typing import Any, Iterator, Optional, Callable, Type, TypeVar, List, ContextManager, cast, get_args, get_origin
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from contextlib import contextmanager
-
+from collections import abc
 
 P = ParamSpec('P')
 T = TypeVar('T')
@@ -29,7 +29,14 @@ class _Definition:
 
     @property
     def cls(self):
-        return self.signature.return_annotation
+        cls = get_origin(self.signature.return_annotation)
+
+        if not issubclass(cls, abc.Iterator):
+            raise TypeError()
+
+        arg, = get_args(self.signature.return_annotation)
+
+        return arg
 
 
 @dataclass
@@ -92,7 +99,7 @@ class Container:
 
     def _get_definition(self, cls, name=None) -> _Definition:
         for definition in self._definitions:
-            if issubclass(definition.signature.return_annotation, cls) and definition.name == name:
+            if issubclass(definition.cls, cls) and definition.name == name:
                 return definition
 
     def define(self, scope: Literal['context', 'singleton'], name=None) -> Callable[[Callable[P, T]], Callable[P, T]]:
