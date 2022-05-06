@@ -1,9 +1,9 @@
-from typing import Any, Iterator, Optional, Callable, Type, TypeVar, List, ContextManager, cast, get_args, get_origin
+from typing import Any, Optional, Callable, Type, TypeVar, List, ContextManager, cast, get_args, get_origin
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
 from contextvars import ContextVar
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from contextlib import contextmanager
 from collections import abc
 from threading import Lock
@@ -109,7 +109,7 @@ class Container:
         assert scope in ['context', 'singleton']
 
         def definer(function: Callable[P, T]) -> Callable[P, T]:
-            signature = get_signature(function, eval_str=True)
+            signature = get_signature(function)
             factory = contextmanager(function)
 
             if scope == 'context':
@@ -171,7 +171,7 @@ class Injector:
         self._cr = cr
         self._function = function
         self._requires = []
-        self._signature = get_signature(function, eval_str=True)
+        self._signature = get_signature(function)
 
     def __call__(self, *args: Any, **kwargs: Any) -> T:
 
