@@ -6,22 +6,26 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from contextlib import contextmanager
 from collections import abc
+from threading import Lock
+
 
 P = ParamSpec('P')
 T = TypeVar('T')
 
 
-@dataclass
 class _Definition:
-    signature: Signature
-    factory: Callable[..., ContextManager]
-    scope: str
-    name: str
+    def __init__(self, signature: Signature, factory: Callable[..., ContextManager], scope: str, name: str):
+        self.signature = signature
+        self.factory = factory
+        self.scope = scope
+        self.name = name
+
+        self.lock = Lock()
 
     def enter(self):
         raise NotImplementedError()
 
-    def exit(self, error, error_type, tb):
+    def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
         raise NotImplementedError()
 
     def get(self):
@@ -39,10 +43,12 @@ class _Definition:
         return arg
 
 
-@dataclass
 class _InstanceDefinition(_Definition):
-    _instance: Any = field(init=False, default=None)
-    _manager: ContextManager = field(init=False, default=None)
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+
+        self._instance: Any = None
+        self._manager: ContextManager[Any, Any, Any] = None
 
     def enter(self):
         manager = self.factory()
@@ -50,7 +56,7 @@ class _InstanceDefinition(_Definition):
         self._manager = manager
         self._instance = manager.__enter__()
 
-    def exit(self, error, error_type, tb):
+    def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
         if not self._manager:
             return
 
@@ -62,16 +68,12 @@ class _InstanceDefinition(_Definition):
         return self._instance
 
 
-@dataclass
 class _ContextDefinition(_Definition):
-    _manager_var: ContextVar[ContextManager] = field(init=False)
-    _instance_var: ContextVar[Any] = field(init=False)
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
 
-    def __post_init__(self):
-        self._instance_var = ContextVar(
-            f'instance_{self.cls.__name__}_{self.factory.__name__}', default=None)
-        self._manager_var = ContextVar(
-            f'manager_{self.cls.__name__}_{self.factory.__name__}', default=None)
+        self._instance_var = ContextVar(f'instance_{self.cls.__name__}_{self.factory.__name__}', default=None)
+        self._manager_var = ContextVar(f'manager_{self.cls.__name__}_{self.factory.__name__}', default=None)
 
     def enter(self):
         manager = self.factory()
@@ -79,7 +81,7 @@ class _ContextDefinition(_Definition):
         self._manager_var.set(manager)
         self._instance_var.set(manager.__enter__())
 
-    def exit(self, error, error_type, tb):
+    def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
         manager = self._manager_var.get()
 
         if not manager:
@@ -143,7 +145,7 @@ class Container:
         try:
             yield
         except Exception as error:
-            self.release(release_scopes, error, type(error), None)
+            self.release(release_scopes, type(error), error, None)
             raise
         else:
             self.release(release_scopes, None, None, None)
@@ -154,8 +156,9 @@ class Container:
         if not definition:
             raise LookupError()
 
-        if not definition.get():
-            definition.enter()
+        with definition.lock:
+            if not definition.get():
+                definition.enter()
 
         return cast(T, definition.get())
 
