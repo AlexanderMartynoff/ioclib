@@ -51,7 +51,7 @@ class _InstanceDefinition(_Definition):
 
     def exit(self, error, error_type, tb):
         if not self._manager:
-            raise RuntimeError()
+            return
 
         self._manager.__exit__(error_type, error, tb)
         self._manager = None
@@ -82,7 +82,7 @@ class _ContextDefinition(_Definition):
         manager = self._manager_var.get()
 
         if not manager:
-            raise RuntimeError()
+            return
 
         manager.__exit__(error_type, error, tb)
 
