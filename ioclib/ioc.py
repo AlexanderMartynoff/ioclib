@@ -41,7 +41,8 @@ class _Definition:
 
 @dataclass
 class _InstanceDefinition(_Definition):
-    _instance: Any = None
+    _instance: Any = field(init=False, default=None)
+    _manager: ContextManager = field(init=False, default=None)
 
     def enter(self):
         manager = self.factory()
