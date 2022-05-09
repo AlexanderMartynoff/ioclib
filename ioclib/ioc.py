@@ -128,27 +128,24 @@ class Container:
                     name=name,
                 ))
 
-            return function
+            return factory
 
         return definer
 
-    def release(self, scopes, error, error_type, tb):
+    def release(self, factories, error, error_type, tb):
         for definition in self._definitions:
-            if definition.scope in scopes:
+            if not factories or definition.factory in factories:
                 definition.exit(error, error_type, tb)
 
     @contextmanager
-    def run(self, release_scopes=None):
-        if not release_scopes:
-            release_scopes = ['context', 'singleton']
-
+    def entry(self, *release_factories):
         try:
             yield
         except Exception as error:
-            self.release(release_scopes, type(error), error, None)
+            self.release(release_factories, type(error), error, None)
             raise
         else:
-            self.release(release_scopes, None, None, None)
+            self.release(release_factories, None, None, None)
 
     def get(self, cls: Type[T], name=None) -> T:
         definition = self._get_definition(cls, name)

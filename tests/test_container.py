@@ -35,7 +35,7 @@ def test_singleton_injection():
     ioc = Container()
 
     @ioc.define('singleton')
-    def def_temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
 
@@ -50,11 +50,11 @@ def test_singleton_multuple_injection():
     ioc = Container()
 
     @ioc.define('singleton')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.define('singleton')
-    def breeze_service() -> Iterator[BreezeService]:
+    def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
 
 
@@ -72,16 +72,16 @@ def test_singleton_recursion_injection():
     ioc = Container()
 
     @ioc.define('singleton')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.define('singleton')
-    def breeze_service() -> Iterator[BreezeService]:
+    def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
 
     @ioc.define('singleton')
     @ioc.injectable
-    def weather_service(temperature_service: TemperatureService = injection(),
+    def weather_service_def(temperature_service: TemperatureService = injection(),
                         breeze_service: BreezeService = injection()) -> Iterator[WeatherService]:
         yield WeatherService(temperature_service, breeze_service)
 
@@ -118,7 +118,7 @@ def test_context_injection():
     ioc = Container()
 
     @ioc.define('context')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.injectable
@@ -132,11 +132,11 @@ def test_context_multiple_injection():
     ioc = Container()
 
     @ioc.define('context')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.define('context')
-    def breeze_service() -> Iterator[BreezeService]:
+    def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
 
 
@@ -154,16 +154,16 @@ def test_context_recursion_injection():
     ioc = Container()
 
     @ioc.define('context')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.define('context')
-    def breeze_service() -> Iterator[BreezeService]:
+    def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
 
     @ioc.define('context')
     @ioc.injectable
-    def weather_service(temperature_service: TemperatureService = injection(),
+    def weather_service_def(temperature_service: TemperatureService = injection(),
                         breeze_service: BreezeService = injection()) -> Iterator[WeatherService]:
         yield WeatherService(temperature_service, breeze_service)
 
@@ -182,7 +182,7 @@ def test_context_with_multiple_context_injection():
     ioc = Container()
 
     @ioc.define('context')
-    def temperature_service() -> Iterator[TemperatureService]:
+    def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
     @ioc.injectable
@@ -202,7 +202,7 @@ def test_context_container_enter_injection():
     release_count = 0
 
     @ioc.define('context')
-    def closable_service() -> Iterator[ClosableService]:
+    def closable_service_def() -> Iterator[ClosableService]:
         nonlocal relove_count, release_count
 
         relove_count += 1
@@ -218,7 +218,7 @@ def test_context_container_enter_injection():
         return closable_service
 
     def main():
-        with ioc.run(['context']):
+        with ioc.entry(closable_service_def):
             closable_service = get_closable_service()
             assert not closable_service.closed
 
@@ -243,7 +243,7 @@ def test_container_error_handle_injection():
     ioc = Container()
 
     @ioc.define('context')
-    def closable_service() -> Iterator[ClosableService]:
+    def closable_service_def() -> Iterator[ClosableService]:
         service = ClosableService()
 
         try:
@@ -257,7 +257,7 @@ def test_container_error_handle_injection():
 
     def main():
         try:
-            with ioc.run():
+            with ioc.entry(closable_service_def):
                 closable_service = get_closable_service()
                 raise RuntimeError()
         except Exception:
