@@ -1,13 +1,13 @@
-from setuptools import setup, find_packages
+from setuptools import setup, find_namespace_packages
 
 
-__version__ = '0.9'
+__version__ = '1.2'
 
 
 setup(
-    name='ioclib',
+    name='ioclib-injector',
     version=__version__,
-    packages=find_packages(),
+    packages=find_namespace_packages(include=['ioclib.*']),
     install_requires=[
         'typing_extensions>=4',
     ],
