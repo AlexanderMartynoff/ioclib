@@ -1,4 +1,4 @@
-from typing import Any, Optional, Callable, Type, TypeVar, List, Tuple, Dict, ContextManager, cast, get_args, get_origin
+from typing import Any, Generic, Optional, Callable, Type, TypeVar, List, Tuple, Dict, ContextManager, cast, get_args, get_origin
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
@@ -13,26 +13,22 @@ P = ParamSpec('P')
 T = TypeVar('T')
 
 
+void = object()
+
+
+def inject(name: Optional[str] = None, tp: Type[Any] = None) -> Any:
+    return Requirement(name, tp, 'injector', void)
+
+
 @dataclass(frozen=True)
-class Requirement:
+class Requirement(Generic[T]):
     name: str
-    cls: Type[Any]
+    tp: Type[T]
     location: str
-
-    def __getattr__(self, name: str) -> Any:
-        raise TypeError('Probably you forget `@injectable` decorator for callable function')
+    default: T
 
 
-def inject(name: Optional[str] = None, cls=None) -> Any:
-    return Requirement(name, cls, 'injector')
-
-
-class Plugin:
-    def get(self, requirement: Requirement, args: Tuple[Any, ...], kwargs: Dict[str, Any]):
-        pass
-
-
-class _Definition:
+class _Definition(Generic[T]):
     def __init__(self, signature: Signature, factory: Callable[..., ContextManager], scope: str, name: str):
         self.signature = signature
         self.factory = factory
@@ -51,10 +47,10 @@ class _Definition:
         raise NotImplementedError()
 
     @property
-    def cls(self):
-        cls = get_origin(self.signature.return_annotation)
+    def tp(self):
+        tp = get_origin(self.signature.return_annotation)
 
-        if not issubclass(cls, abc.Iterator):
+        if not issubclass(tp, abc.Iterator):
             raise TypeError()
 
         arg, = get_args(self.signature.return_annotation)
@@ -91,8 +87,8 @@ class _ContextDefinition(_Definition):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance_var = ContextVar(f'instance_{self.cls.__name__}_{self.factory.__name__}', default=None)
-        self._manager_var = ContextVar(f'manager_{self.cls.__name__}_{self.factory.__name__}', default=None)
+        self._instance_var = ContextVar(f'instance_{self.tp.__name__}_{self.factory.__name__}', default=None)
+        self._manager_var = ContextVar(f'manager_{self.tp.__name__}_{self.factory.__name__}', default=None)
 
     def enter(self):
         manager = self.factory()
@@ -120,9 +116,9 @@ class Injector:
         self._plugins = plugins or []
         self._definitions: List[_Definition] = []
 
-    def _get_definition(self, requirement: Requirement) -> _Definition:
+    def _get_definition(self, requirement: Requirement[T]) -> _Definition:
         for definition in self._definitions:
-            if issubclass(definition.cls, requirement.cls) and (
+            if issubclass(definition.tp, requirement.tp) and (
                     definition.name is None or definition.name == requirement.name):
                 return definition
 
@@ -168,7 +164,7 @@ class Injector:
         else:
             self.release(release_factories, None, None, None)
 
-    def _get_from_plugin(self, requirement: Requirement, args=None, kwargs=None):
+    def _get_from_plugin(self, requirement: Requirement[T], args=None, kwargs=None) -> T:
         for plugin in self._plugins or []:
             with suppress(LookupError):
                 value = plugin(requirement, args, kwargs)
@@ -176,9 +172,12 @@ class Injector:
                 if value:
                     return value
 
+        if requirement.default is not void:
+            return requirement.default
+
         raise LookupError()
 
-    def _get(self, requirement: Requirement) -> T:
+    def _get(self, requirement: Requirement[T]) -> T:
         definition = self._get_definition(requirement)
 
         if not definition:
@@ -189,6 +188,9 @@ class Injector:
                 definition.enter()
 
         return cast(T, definition.get())
+
+    def get(self, tp: Type[T], name: Optional[str] = None) -> T:
+        return self._get(inject(name, tp))
 
     def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
         return update_wrapper(_Injector(self, function), function)
@@ -210,21 +212,21 @@ class _Injector:
 
             requirement = replace(
                 requirement,
-                cls=requirement.cls or parameter.annotation,
+                tp=requirement.tp or parameter.annotation,
                 name=requirement.name or parameter.name,
             )
 
-            arg = Parameter.empty
+            arg = void
 
             if parameter.kind in [Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
                 with suppress(IndexError):
                     arg = args[position]
 
-            if arg is Parameter.empty and parameter.kind in [Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
+            if arg is void and parameter.kind in [Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
                 with suppress(KeyError):
                     arg = kwargs[parameter.name]
 
-            if arg is Parameter.empty:
+            if arg is void:
                 try:
                     value = self._injector._get(requirement)
                 except LookupError:
@@ -234,5 +236,5 @@ class _Injector:
 
         return self._function(*args, **kwargs)
 
-    def __get__(self, instance, cls) -> Callable[P, T]:
-        return partial(self, instance if instance else cls)
+    def __get__(self, instance, tp) -> Callable[P, T]:
+        return partial(self, instance if instance else tp)
