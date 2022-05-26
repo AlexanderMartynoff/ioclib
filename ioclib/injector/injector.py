@@ -1,4 +1,4 @@
-from typing import Any, Generic, Optional, Callable, Type, TypeVar, List, Tuple, Dict, ContextManager, cast, get_args, get_origin
+from typing import Any, Generic, Optional, Callable, Type, TypeVar, List, ContextManager, Iterator, cast, get_args, get_origin
 from typing_extensions import ParamSpec, Literal
 from functools import partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
@@ -22,14 +22,14 @@ def inject(name: Optional[str] = None, tp: Type[Any] = None) -> Any:
 
 @dataclass(frozen=True)
 class Requirement(Generic[T]):
-    name: str
-    tp: Type[T]
+    name: Optional[str]
+    tp: Optional[Type[T]]
     location: str
     default: T
 
 
 class _Definition(Generic[T]):
-    def __init__(self, signature: Signature, factory: Callable[..., ContextManager], scope: str, name: str):
+    def __init__(self, signature: Signature, factory: Callable[..., ContextManager[T]], scope: str, name: str):
         self.signature = signature
         self.factory = factory
         self.scope = scope
@@ -43,7 +43,7 @@ class _Definition(Generic[T]):
     def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
         raise NotImplementedError()
 
-    def get(self):
+    def get(self) -> Optional[T]:
         raise NotImplementedError()
 
     @property
@@ -58,12 +58,12 @@ class _Definition(Generic[T]):
         return arg
 
 
-class _InstanceDefinition(_Definition):
+class _InstanceDefinition(_Definition[T]):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance: Any = None
-        self._manager: ContextManager[Any, Any, Any] = None
+        self._instance: Optional[T] = None
+        self._manager: Optional[ContextManager[T]] = None
 
     def enter(self):
         manager = self.factory()
@@ -79,16 +79,16 @@ class _InstanceDefinition(_Definition):
         self._manager = None
         self._instance = None
 
-    def get(self):
+    def get(self) -> Optional[T]:
         return self._instance
 
 
-class _ContextDefinition(_Definition):
+class _ContextDefinition(_Definition[T]):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance_var = ContextVar(f'instance_{self.tp.__name__}_{self.factory.__name__}', default=None)
-        self._manager_var = ContextVar(f'manager_{self.tp.__name__}_{self.factory.__name__}', default=None)
+        self._instance_var = ContextVar[Optional[T]](self._generate_var_name('Instance'), default=None)
+        self._manager_var = ContextVar[Optional[ContextManager[T]]](self._generate_var_name('Manager'), default=None)
 
     def enter(self):
         manager = self.factory()
@@ -107,25 +107,32 @@ class _ContextDefinition(_Definition):
         self._manager_var.set(None)
         self._instance_var.set(None)
 
-    def get(self):
+    def get(self) -> Optional[T]:
         return self._instance_var.get()
+    
+    def _generate_var_name(self, prefix) -> str:
+        return f'{prefix}_{self.tp.__name__}_{self.factory.__name__}'
 
 
 class Injector:
     def __init__(self, plugins: Optional[List[Callable]] = None):
-        self._plugins = plugins or []
-        self._definitions: List[_Definition] = []
+        self._plugins = plugins
+        self._definitions: List[_Definition[Any]] = []
 
-    def _get_definition(self, requirement: Requirement[T]) -> _Definition:
+    def _get_definition(self, requirement: Requirement[T]) -> Optional[_Definition[Any]]:
+        assert requirement.tp
+
         for definition in self._definitions:
             if issubclass(definition.tp, requirement.tp) and (
                     definition.name is None or definition.name == requirement.name):
                 return definition
 
-    def define(self, scope: Literal['context', 'singleton'], name=None) -> Callable[[Callable[P, T]], Callable[P, T]]:
+        return None
+
+    def define(self, scope: Literal['context', 'singleton'], name=None) -> Callable[[Callable[P, Iterator[T]]], Callable[P, ContextManager[T]]]:
         assert scope in ['context', 'singleton']
 
-        def definer(function: Callable[P, T]) -> Callable[P, T]:
+        def definer(function: Callable[P, Iterator[T]]) -> Callable[P, ContextManager[T]]:
             signature = get_signature(function)
             factory = contextmanager(function)
 
