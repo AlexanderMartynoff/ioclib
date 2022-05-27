@@ -16,14 +16,14 @@ T = TypeVar('T')
 void = object()
 
 
-def inject(name: Optional[str] = None, tp: Type[Any] = None) -> Any:
-    return Requirement(name, tp, 'injector', void)
+def inject(name: Optional[str] = None, cls: Type[Any] = None) -> Any:
+    return Requirement(name, cls, 'injector', void)
 
 
 @dataclass(frozen=True)
 class Requirement(Generic[T]):
     name: Optional[str]
-    tp: Optional[Type[T]]
+    type: Optional[Type[T]]
     location: str
     default: T
 
@@ -47,10 +47,10 @@ class _Definition(Generic[T]):
         raise NotImplementedError()
 
     @property
-    def tp(self):
-        tp = get_origin(self.signature.return_annotation)
+    def type(self):
+        origin = get_origin(self.signature.return_annotation)
 
-        if not issubclass(tp, abc.Iterator):
+        if not issubclass(origin, abc.Iterator):
             raise TypeError()
 
         arg, = get_args(self.signature.return_annotation)
@@ -109,9 +109,9 @@ class _ContextDefinition(_Definition[T]):
 
     def get(self) -> Optional[T]:
         return self._instance_var.get()
-    
+
     def _generate_var_name(self, prefix) -> str:
-        return f'{prefix}_{self.tp.__name__}_{self.factory.__name__}'
+        return f'{prefix}_{self.type.__name__}_{self.factory.__name__}'
 
 
 class Injector:
@@ -120,10 +120,10 @@ class Injector:
         self._definitions: List[_Definition[Any]] = []
 
     def _get_definition(self, requirement: Requirement[T]) -> Optional[_Definition[Any]]:
-        assert requirement.tp
+        assert requirement.type
 
         for definition in self._definitions:
-            if issubclass(definition.tp, requirement.tp) and (
+            if issubclass(definition.type, requirement.type) and (
                     definition.name is None or definition.name == requirement.name):
                 return definition
 
@@ -196,18 +196,17 @@ class Injector:
 
         return cast(T, definition.get())
 
-    def get(self, tp: Type[T], name: Optional[str] = None) -> T:
-        return self._get(inject(name, tp))
+    def get(self, cls: Type[T], name: Optional[str] = None) -> T:
+        return self._get(inject(name, cls))
 
     def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
-        return update_wrapper(_Injector(self, function), function)
+        return update_wrapper(_InjectableFunction(self, function), function)
 
 
-class _Injector:
+class _InjectableFunction:
     def __init__(self, injector: Injector, function: Callable[P, T]):
         self._injector = injector
         self._function = function
-        self._requires = []
         self._signature = get_signature(function)
 
     def __call__(self, *args: Any, **kwargs: Any) -> T:
@@ -219,7 +218,7 @@ class _Injector:
 
             requirement = replace(
                 requirement,
-                tp=requirement.tp or parameter.annotation,
+                type=requirement.type or parameter.annotation,
                 name=requirement.name or parameter.name,
             )
 
@@ -243,5 +242,5 @@ class _Injector:
 
         return self._function(*args, **kwargs)
 
-    def __get__(self, instance, tp) -> Callable[P, T]:
-        return partial(self, instance if instance else tp)
+    def __get__(self, instance, cls) -> Callable[P, T]:
+        return partial(self, instance if instance else cls)
