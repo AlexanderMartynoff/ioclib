@@ -1,6 +1,20 @@
-from typing import Any, Generic, Optional, Callable, Type, TypeVar, List, ContextManager, Iterator, cast, get_args, get_origin
+from typing import (
+    Any,
+    Generic,
+    Optional,
+    Callable,
+    Tuple,
+    Type,
+    TypeVar,
+    List,
+    ContextManager,
+    Iterator,
+    Union,
+    cast,
+    get_args,
+    get_origin)
 from typing_extensions import ParamSpec, Literal
-from functools import partial, update_wrapper
+from functools import cached_property, partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -25,7 +39,24 @@ class Requirement(Generic[T]):
     name: Optional[str]
     type: Optional[Type[T]]
     location: str
-    default: T
+    default: Optional[T]
+
+    @cached_property
+    def types(self) -> Tuple[Type[Any]]:
+        origin = get_origin(self.type) 
+
+        if origin is Union:
+            return tuple(arg for arg in get_args(self.type) if arg is not None)
+        elif origin is not None:
+            raise TypeError(f'Only `Union` generic support, not `{origin}`')
+
+        return self.type,
+
+    def issuperclass(self, cls) -> bool:
+        if not isinstance(cls, tuple):
+            cls = cls,
+
+        return any(issubclass(cls, self.types) for cls in cls)
 
 
 class _Definition(Generic[T]):
@@ -123,7 +154,7 @@ class Injector:
         assert requirement.type
 
         for definition in self._definitions:
-            if issubclass(definition.type, requirement.type) and (
+            if requirement.issuperclass(definition.type) and (
                     definition.name is None or definition.name == requirement.name):
                 return definition
 

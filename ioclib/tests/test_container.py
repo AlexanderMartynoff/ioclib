@@ -257,13 +257,14 @@ def test_container_error_handle_inject():
         return closable_service
 
     def main():
+        closable_service = None
+
         try:
             with injector.entry([closable_service_def]):
                 closable_service = get_closable_service()
-                raise RuntimeError()
         except Exception:
             pass
 
-        assert closable_service.closed
+        assert closable_service and closable_service.closed
 
     main()
