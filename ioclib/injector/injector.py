@@ -43,7 +43,7 @@ class Requirement(Generic[T]):
 
     @cached_property
     def types(self) -> Tuple[Type[Any]]:
-        origin = get_origin(self.type) 
+        origin = get_origin(self.type)
 
         if origin is Union:
             return tuple(arg for arg in get_args(self.type) if arg is not None)
@@ -118,8 +118,8 @@ class _ContextDefinition(_Definition[T]):
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance_var = ContextVar[Optional[T]](self._generate_var_name('Instance'), default=None)
-        self._manager_var = ContextVar[Optional[ContextManager[T]]](self._generate_var_name('Manager'), default=None)
+        self._instance_var = ContextVar[Optional[T]]('Instance', default=None)
+        self._manager_var = ContextVar[Optional[ContextManager[T]]]('Manager', default=None)
 
     def enter(self):
         manager = self.factory()
@@ -140,9 +140,6 @@ class _ContextDefinition(_Definition[T]):
 
     def get(self) -> Optional[T]:
         return self._instance_var.get()
-
-    def _generate_var_name(self, prefix) -> str:
-        return f'{prefix}_{self.type.__name__}_{self.factory.__name__}'
 
 
 class Injector:

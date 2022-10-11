@@ -39,7 +39,6 @@ def test_singleton_inject():
     def temperature_service_def() -> Iterator[TemperatureService]:
         yield TemperatureService(0)
 
-
     @injector.injectable
     def main(temperature_service: TemperatureService = inject()):
         assert isinstance(temperature_service, TemperatureService)
@@ -57,7 +56,6 @@ def test_singleton_multuple_inject():
     @injector.define('singleton')
     def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
-
 
     @injector.injectable
     def main(temperature_service: TemperatureService = inject(),
@@ -85,7 +83,6 @@ def test_singleton_recursion_inject():
     def weather_service_def(temperature_service: TemperatureService = inject(),
                             breeze_service: BreezeService = inject()) -> Iterator[WeatherService]:
         yield WeatherService(temperature_service, breeze_service)
-
 
     @injector.injectable
     def main(weather_service: WeatherService = inject()):
@@ -140,7 +137,6 @@ def test_context_multiple_inject():
     def breeze_service_def() -> Iterator[BreezeService]:
         yield BreezeService(0)
 
-
     @injector.injectable
     def main(temperature_service: TemperatureService = inject(),
              breeze_service: BreezeService = inject()):
@@ -165,9 +161,8 @@ def test_context_recursion_inject():
     @injector.define('context')
     @injector.injectable
     def weather_service_def(temperature_service: TemperatureService = inject(),
-                        breeze_service: BreezeService = inject()) -> Iterator[WeatherService]:
+                            breeze_service: BreezeService = inject()) -> Iterator[WeatherService]:
         yield WeatherService(temperature_service, breeze_service)
-
 
     @injector.injectable
     def main(weather_service: WeatherService = inject()):
