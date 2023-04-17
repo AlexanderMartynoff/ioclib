@@ -1,7 +1,6 @@
 from typing import (
     Any,
     Generic,
-    Optional,
     Callable,
     Tuple,
     Type,
@@ -10,10 +9,11 @@ from typing import (
     ContextManager,
     Iterator,
     Union,
+    ClassVar,
     cast,
     get_args,
     get_origin)
-from typing_extensions import ParamSpec, Literal
+from typing_extensions import ParamSpec, Literal, Self
 from functools import cached_property, partial, update_wrapper
 from inspect import Parameter, signature as get_signature, Signature
 from contextvars import ContextVar
@@ -30,16 +30,16 @@ T = TypeVar('T')
 void = object()
 
 
-def inject(name: Optional[str] = None, cls: Type[Any] = None) -> Any:
+def inject(name: str | None = None, cls: Type[Any] | None = None) -> Any:
     return Requirement(name, cls, 'injector', void)
 
 
 @dataclass(frozen=True)
 class Requirement(Generic[T]):
-    name: Optional[str]
-    type: Optional[Type[T]]
+    name: str | None
+    type: Type[T] | None
     location: str
-    default: Optional[T]
+    default: T | None
 
     @cached_property
     def types(self) -> Tuple[Type[Any]]:
@@ -59,11 +59,16 @@ class Requirement(Generic[T]):
         return any(issubclass(cls, self.types) for cls in cls)
 
 
-class _Definition(Generic[T]):
-    def __init__(self, signature: Signature, factory: Callable[..., ContextManager[T]], scope: str, name: str):
+class Definition(Generic[T]):
+    classes: list[Type[Self]] = []
+    scope: ClassVar[str]
+
+    def __init_subclass__(cls):
+        cls.classes.append(cls)
+
+    def __init__(self, signature: Signature, factory: Callable[..., ContextManager[T]], name: str):
         self.signature = signature
         self.factory = factory
-        self.scope = scope
         self.name = name
 
         self.lock = Lock()
@@ -74,7 +79,7 @@ class _Definition(Generic[T]):
     def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
         raise NotImplementedError()
 
-    def get(self) -> Optional[T]:
+    def get(self) -> T | None:
         raise NotImplementedError()
 
     @property
@@ -89,12 +94,14 @@ class _Definition(Generic[T]):
         return arg
 
 
-class _InstanceDefinition(_Definition[T]):
+class SingletonDefinition(Definition[T]):
+    scope = 'singleton'
+
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance: Optional[T] = None
-        self._manager: Optional[ContextManager[T]] = None
+        self._instance: T | None = None
+        self._manager: ContextManager[T] | None = None
 
     def enter(self):
         manager = self.factory()
@@ -110,75 +117,60 @@ class _InstanceDefinition(_Definition[T]):
         self._manager = None
         self._instance = None
 
-    def get(self) -> Optional[T]:
+    def get(self) -> T | None:
         return self._instance
 
 
-class _ContextDefinition(_Definition[T]):
+class ContextDefinition(Definition[T]):
+    scope = 'context'
+
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
 
-        self._instance_var = ContextVar[Optional[T]]('Instance', default=None)
-        self._manager_var = ContextVar[Optional[ContextManager[T]]]('Manager', default=None)
+        self._instance = ContextVar[T | None]('instance', default=None)
+        self._manager = ContextVar[ContextManager[T] | None]('manager', default=None)
 
     def enter(self):
         manager = self.factory()
 
-        self._manager_var.set(manager)
-        self._instance_var.set(manager.__enter__())
+        self._manager.set(manager)
+        self._instance.set(manager.__enter__())
 
     def exit(self, error_type: Type[Exception], error: Exception, tb: Any):
-        manager = self._manager_var.get()
+        manager = self._manager.get()
 
         if not manager:
             return
 
         manager.__exit__(error_type, error, tb)
 
-        self._manager_var.set(None)
-        self._instance_var.set(None)
+        self._manager.set(None)
+        self._instance.set(None)
 
-    def get(self) -> Optional[T]:
-        return self._instance_var.get()
+    def get(self) -> T | None:
+        return self._instance.get()
 
 
 class Injector:
-    def __init__(self, plugins: Optional[List[Callable]] = None):
+    def __init__(self, plugins: List[Callable] | None = None):
         self._plugins = plugins
-        self._definitions: List[_Definition[Any]] = []
+        self._definitions: List[Definition[Any]] = []
 
-    def _get_definition(self, requirement: Requirement[T]) -> Optional[_Definition[Any]]:
-        assert requirement.type
-
-        for definition in self._definitions:
-            if requirement.issuperclass(definition.type) and (
-                    definition.name is None or definition.name == requirement.name):
-                return definition
-
-        return None
-
-    def define(self, scope: Literal['context', 'singleton'], name=None) -> Callable[[Callable[P, Iterator[T]]], Callable[P, ContextManager[T]]]:
-        assert scope in ['context', 'singleton']
+    def define(self,
+               scope: Literal['context', 'singleton'],
+               name: str | None = None) -> Callable[[Callable[P, Iterator[T]]], Callable[P, ContextManager[T]]]:
 
         def definer(function: Callable[P, Iterator[T]]) -> Callable[P, ContextManager[T]]:
-            signature = get_signature(function)
             factory = contextmanager(function)
 
-            if scope == 'context':
-                self._definitions.append(_ContextDefinition(
-                    signature=signature,
-                    factory=factory,
-                    scope=scope,
-                    name=name,
-                ))
-
-            elif scope == 'singleton':
-                self._definitions.append(_InstanceDefinition(
-                    signature=signature,
-                    factory=factory,
-                    scope=scope,
-                    name=name,
-                ))
+            for cls in Definition.classes:
+                if cls.scope == scope:
+                    self._definitions.append(cls(
+                        signature=get_signature(function),
+                        factory=factory,
+                        name=name,
+                    ))
+                    break
 
             return factory
 
@@ -199,18 +191,8 @@ class Injector:
         else:
             self.release(release_factories, None, None, None)
 
-    def _get_from_plugin(self, requirement: Requirement[T], args=None, kwargs=None) -> T:
-        for plugin in self._plugins or []:
-            with suppress(LookupError):
-                value = plugin(requirement, args, kwargs)
-
-                if value:
-                    return value
-
-        if requirement.default is not void:
-            return requirement.default
-
-        raise LookupError()
+    def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
+        return update_wrapper(Injectable(self, function), function)
 
     def _get(self, requirement: Requirement[T]) -> T:
         definition = self._get_definition(requirement)
@@ -224,14 +206,31 @@ class Injector:
 
         return cast(T, definition.get())
 
-    def get(self, cls: Type[T], name: Optional[str] = None) -> T:
-        return self._get(inject(name, cls))
+    def _get_extra(self, requirement: Requirement[T], args=None, kwargs=None) -> T:
+        for plugin in self._plugins or []:
+            with suppress(LookupError):
+                value = plugin(requirement, args, kwargs)
 
-    def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
-        return update_wrapper(_InjectableFunction(self, function), function)
+                if value:
+                    return value
+
+        if requirement.default is not void:
+            return requirement.default
+
+        raise LookupError()
+
+    def _get_definition(self, requirement: Requirement[T]) -> Definition[Any] | None:
+        assert requirement.type
+
+        for definition in self._definitions:
+            if requirement.issuperclass(definition.type) and (
+                    definition.name is None or definition.name == requirement.name):
+                return definition
+
+        return None
 
 
-class _InjectableFunction:
+class Injectable:
     def __init__(self, injector: Injector, function: Callable[P, T]):
         self._injector = injector
         self._function = function
@@ -264,7 +263,7 @@ class _InjectableFunction:
                 try:
                     value = self._injector._get(requirement)
                 except LookupError:
-                    value = self._injector._get_from_plugin(requirement, args, kwargs)
+                    value = self._injector._get_extra(requirement, args, kwargs)
 
                 kwargs[parameter.name] = value
 
