@@ -1,7 +1,7 @@
 from setuptools import setup, find_namespace_packages
 
 
-__version__ = '1.8'
+__version__ = '1.9'
 
 
 setup(

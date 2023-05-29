@@ -2,13 +2,14 @@ import pytest
 from contextvars import Context
 from ioclib.injector import Injector, Requirement, inject
 from typing import Iterator
+from concurrent.futures import ThreadPoolExecutor
 
 
 class ClosableService:
-    def __init__(self):
+    def __init__(self) -> None:
         self.closed = False
 
-    def close(self):
+    def close(self) -> None:
         self.closed = True
 
 
@@ -17,22 +18,22 @@ class UndefinedService:
 
 
 class BreezeService:
-    def __init__(self, breeze):
+    def __init__(self, breeze) -> None:
         self.breeze = breeze
 
 
 class TemperatureService:
-    def __init__(self, temperature):
+    def __init__(self, temperature) -> None:
         self.temperature = temperature
 
 
 class WeatherService:
-    def __init__(self, temperature_service: TemperatureService, breeze_service: BreezeService):
+    def __init__(self, temperature_service: TemperatureService, breeze_service: BreezeService) -> None:
         self.temperature_service = temperature_service
         self.breeze_service = breeze_service
 
 
-def test_singleton_inject():
+def test_singleton_inject() -> None:
     injector = Injector()
 
     @injector.define('singleton')
@@ -40,13 +41,13 @@ def test_singleton_inject():
         yield TemperatureService(0)
 
     @injector.injectable
-    def main(temperature_service: TemperatureService = inject()):
+    def main(temperature_service: TemperatureService = inject()) -> None:
         assert isinstance(temperature_service, TemperatureService)
 
     main()
 
 
-def test_singleton_multuple_inject():
+def test_singleton_multuple_inject() -> None:
     injector = Injector()
 
     @injector.define('singleton')
@@ -59,7 +60,7 @@ def test_singleton_multuple_inject():
 
     @injector.injectable
     def main(temperature_service: TemperatureService = inject(),
-             breeze_service: BreezeService = inject()):
+             breeze_service: BreezeService = inject()) -> None:
 
         assert isinstance(temperature_service, TemperatureService)
         assert isinstance(breeze_service, BreezeService)
@@ -67,7 +68,7 @@ def test_singleton_multuple_inject():
     main()
 
 
-def test_singleton_recursion_inject():
+def test_singleton_recursion_inject() -> None:
     injector = Injector()
 
     @injector.define('singleton')
@@ -85,7 +86,7 @@ def test_singleton_recursion_inject():
         yield WeatherService(temperature_service, breeze_service)
 
     @injector.injectable
-    def main(weather_service: WeatherService = inject()):
+    def main(weather_service: WeatherService = inject()) -> None:
         assert isinstance(weather_service, WeatherService)
 
         assert isinstance(weather_service.breeze_service, BreezeService)
@@ -94,25 +95,25 @@ def test_singleton_recursion_inject():
     main()
 
 
-def test_lookup_error_inject():
+def test_lookup_error_inject() -> None:
     injector = Injector()
 
     @injector.injectable
-    def main(undefined_service: UndefinedService = inject()):
+    def main(undefined_service: UndefinedService = inject()) -> None:
         pass
 
     with pytest.raises(LookupError):
         main()
 
 
-def test_without_injectable_inject():
-    def main(undefined_service: UndefinedService = inject()):
+def test_without_injectable_inject() -> None:
+    def main(undefined_service: UndefinedService = inject()) -> None:
         assert isinstance(undefined_service, Requirement)
 
     main()
 
 
-def test_context_inject():
+def test_context_inject() -> None:
     injector = Injector()
 
     @injector.define('context')
@@ -120,13 +121,13 @@ def test_context_inject():
         yield TemperatureService(0)
 
     @injector.injectable
-    def main(temperature_service: TemperatureService = inject()):
+    def main(temperature_service: TemperatureService = inject()) -> None:
         assert isinstance(temperature_service, TemperatureService)
 
     main()
 
 
-def test_context_multiple_inject():
+def test_context_multiple_inject() -> None:
     injector = Injector()
 
     @injector.define('context')
@@ -139,7 +140,7 @@ def test_context_multiple_inject():
 
     @injector.injectable
     def main(temperature_service: TemperatureService = inject(),
-             breeze_service: BreezeService = inject()):
+             breeze_service: BreezeService = inject()) -> None:
 
         assert isinstance(temperature_service, TemperatureService)
         assert isinstance(breeze_service, BreezeService)
@@ -147,7 +148,7 @@ def test_context_multiple_inject():
     main()
 
 
-def test_context_recursion_inject():
+def test_context_recursion_inject() -> None:
     injector = Injector()
 
     @injector.define('context')
@@ -165,7 +166,7 @@ def test_context_recursion_inject():
         yield WeatherService(temperature_service, breeze_service)
 
     @injector.injectable
-    def main(weather_service: WeatherService = inject()):
+    def main(weather_service: WeatherService = inject()) -> None:
         assert isinstance(weather_service, WeatherService)
 
         assert isinstance(weather_service.breeze_service, BreezeService)
@@ -174,7 +175,7 @@ def test_context_recursion_inject():
     main()
 
 
-def test_context_with_multiple_context_inject():
+def test_context_with_multiple_context_inject() -> None:
     injector = Injector()
 
     @injector.define('context')
@@ -182,7 +183,7 @@ def test_context_with_multiple_context_inject():
         yield TemperatureService(0)
 
     @injector.injectable
-    def get_temperature_service(temperature_service: TemperatureService = inject()):
+    def get_temperature_service(temperature_service: TemperatureService = inject()) -> TemperatureService:
         return temperature_service
 
     assert Context().run(get_temperature_service) is not Context().run(get_temperature_service)
@@ -191,7 +192,7 @@ def test_context_with_multiple_context_inject():
     assert context.run(get_temperature_service) is context.run(get_temperature_service)
 
 
-def test_context_container_enter_inject():
+def test_context_injector_enter_inject() -> None:
     injector = Injector()
 
     relove_count = 0
@@ -213,7 +214,7 @@ def test_context_container_enter_inject():
     def get_closable_service(closable_service: ClosableService = inject()) -> ClosableService:
         return closable_service
 
-    def main():
+    def main() -> None:
         with injector.entry([closable_service_def]):
             closable_service = get_closable_service()
             assert not closable_service.closed
@@ -235,7 +236,7 @@ def test_context_container_enter_inject():
     main()
 
 
-def test_container_error_handle_inject():
+def test_injector_error_handle_inject() -> None:
     injector = Injector()
 
     @injector.define('context')
@@ -251,7 +252,7 @@ def test_container_error_handle_inject():
     def get_closable_service(closable_service: ClosableService = inject()) -> ClosableService:
         return closable_service
 
-    def main():
+    def main() -> None:
         closable_service = None
 
         try:
@@ -263,3 +264,22 @@ def test_container_error_handle_inject():
         assert closable_service and closable_service.closed
 
     main()
+
+
+def test_multitrheading() -> None:
+    pool = ThreadPoolExecutor(1000)
+
+    injector = Injector()
+
+    @injector.define('singleton')
+    def temperature_service_def() -> Iterator[TemperatureService]:
+        yield TemperatureService(0)
+
+    @injector.injectable
+    def main(temperature_service: TemperatureService = inject()) -> None:
+        return temperature_service
+
+    futures = [pool.submit(main) for _ in range(1000)]
+    results = [future.result() for future in futures]
+
+    assert len(set(results)) == 1
