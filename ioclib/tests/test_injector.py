@@ -276,10 +276,39 @@ def test_multitrheading() -> None:
         yield TemperatureService(0)
 
     @injector.injectable
-    def main(temperature_service: TemperatureService = inject()) -> None:
+    def main(temperature_service: TemperatureService = inject()) -> TemperatureService:
         return temperature_service
 
     futures = [pool.submit(main) for _ in range(1000)]
     results = [future.result() for future in futures]
 
     assert len(set(results)) == 1
+
+
+def test_injectable_class() -> None:
+    injector = Injector()
+
+    @injector.define('singleton')
+    def temperature_service_def() -> Iterator[TemperatureService]:
+        yield TemperatureService(0)
+
+    class Class:
+        @injector.injectable
+        def method(self, temperature_service: TemperatureService = inject()) -> TemperatureService:
+            return temperature_service
+
+        @classmethod
+        @injector.injectable
+        def classmethod(cls, temperature_service: TemperatureService = inject()) -> TemperatureService:
+            return temperature_service
+
+        @staticmethod
+        @injector.injectable
+        def staticmethod(value: int, temperature_service: TemperatureService = inject()) -> int:
+            return temperature_service.temperature or value
+
+    cls = Class()
+
+    assert cls.method().temperature == 0
+    assert cls.classmethod().temperature == 0
+    assert cls.staticmethod(1) == 1

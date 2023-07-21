@@ -1,22 +1,17 @@
 from typing import (
     Any,
-    Generic,
     Callable,
-    Tuple,
-    Type,
-    TypeVar,
-    List,
     ContextManager,
     Iterator,
     Generator,
     Union,
-    ClassVar,
-    cast,
+    Self,
     get_args,
-    get_origin)
-from typing_extensions import ParamSpec, Literal, Self
-from functools import cached_property, partial, update_wrapper
-from inspect import Parameter, signature as get_signature, Signature
+    get_origin,
+    cast)
+from types import TracebackType
+from functools import cached_property, update_wrapper, partial
+from inspect import Parameter, signature, Signature
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from contextlib import contextmanager, suppress
@@ -24,50 +19,52 @@ from collections import abc
 from threading import Lock
 
 
-P = ParamSpec('P')
-T = TypeVar('T')
+missing: Any = object()
 
 
-void = object()
-
-
-def inject(name: str | None = None, cls: Type[Any] | None = None) -> Any:
-    return Requirement(name, cls, 'injector', void)
+def inject(name: str | None = None, cls: type[Any] | None = None) -> Any:
+    return Requirement[Any](name, cls, 'injector', missing)
 
 
 @dataclass(frozen=True)
-class Requirement(Generic[T]):
+class Requirement[T]:
     name: str | None
-    type: Type[T] | None
+    cls: type[T] | None
     location: str
     default: T | None
 
     @cached_property
-    def types(self) -> Tuple[Type[Any]]:
-        origin = get_origin(self.type)
+    def clses(self) -> tuple[type[Any]]:
+        if not self.cls:
+            raise ValueError()
+
+        origin = get_origin(self.cls)
 
         if origin is Union:
-            return tuple(arg for arg in get_args(self.type) if arg is not None)
+            return tuple(arg for arg in get_args(self.cls) if arg is not None)
         elif origin is not None:
             raise TypeError(f'Only `Union` generic support, not `{origin}`')
 
-        return self.type,
+        return self.cls,
 
-    def issuperclass(self, cls) -> bool:
+    def issuperclass(self, cls: tuple[type[Any]] | type[Any]) -> bool:
         if not isinstance(cls, tuple):
             cls = cls,
 
-        return any(issubclass(cls, self.types) for cls in cls)
+        return any(issubclass(cls, self.clses) for cls in cls)
 
 
-class Definition(Generic[T]):
-    classes: list[Type[Self]] = []
-    scope: ClassVar[str]
+class Definition[T]:
+    register: dict[str, type[Self]] = {}
+    scope: str
 
     def __init_subclass__(cls) -> None:
-        cls.classes.append(cls)
+        if cls.scope in cls.register:
+            raise ValueError(f'"{cls.scope}" already exists')
 
-    def __init__(self, signature: Signature, factory: Callable[..., ContextManager[T]], name: str) -> None:
+        cls.register[cls.scope] = cls
+
+    def __init__(self, signature: Signature, factory: Callable[..., ContextManager[T]], name: str | None) -> None:
         self._signature = signature
         self._factory = factory
         self._name = name
@@ -77,7 +74,7 @@ class Definition(Generic[T]):
     def enter(self) -> None:
         raise NotImplementedError()
 
-    def exit(self, error_type: Type[Exception], error: Exception, tb: Any) -> None:
+    def exit(self, error_type: type[Exception], error: Exception, traceback: TracebackType) -> None:
         raise NotImplementedError()
 
     @property
@@ -89,7 +86,7 @@ class Definition(Generic[T]):
         raise NotImplementedError()
 
     @property
-    def type(self) -> Type[T]:
+    def type(self) -> type[T]:
         origin = get_origin(self._signature.return_annotation)
 
         if not issubclass(origin, abc.Iterator):
@@ -100,8 +97,8 @@ class Definition(Generic[T]):
         return arg
 
 
-class SingletonDefinition(Definition[T]):
-    scope = 'singleton'
+class SingletonDefinition[T](Definition[T]):
+    scope: str = 'singleton'
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -115,11 +112,11 @@ class SingletonDefinition(Definition[T]):
         self._manager = manager
         self._instance = manager.__enter__()
 
-    def exit(self, error_type: Type[Exception], error: Exception, tb: Any) -> None:
+    def exit(self, error_type: type[Exception], error: Exception, traceback: TracebackType) -> None:
         if not self._manager:
             return
 
-        self._manager.__exit__(error_type, error, tb)
+        self._manager.__exit__(error_type, error, traceback)
         self._manager = None
         self._instance = None
 
@@ -128,14 +125,14 @@ class SingletonDefinition(Definition[T]):
         return self._instance
 
 
-class ContextDefinition(Definition[T]):
-    scope = 'context'
+class ContextDefinition[T](Definition[T]):
+    scope: str = 'context'
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
-        self._instance = ContextVar[T | None]('instance', default=None)
-        self._manager = ContextVar[ContextManager[T] | None]('manager', default=None)
+        self._instance = ContextVar[T | None]('Instance', default=None)
+        self._manager = ContextVar[ContextManager[T] | None]('Manager', default=None)
 
     def enter(self) -> None:
         manager = self._factory()
@@ -143,14 +140,14 @@ class ContextDefinition(Definition[T]):
         self._manager.set(manager)
         self._instance.set(manager.__enter__())
 
-    def exit(self, error_type: Type[Exception], error: Exception, tb: Any) -> None:
+    def exit(self, error_type: type[Exception], error: Exception, traceback: TracebackType) -> None:
         manager = self._manager.get()
 
         if not manager:
             return
 
         try:
-            manager.__exit__(error_type, error, tb)
+            manager.__exit__(error_type, error, traceback)
         finally:
             self._manager.set(None)
             self._instance.set(None)
@@ -160,26 +157,29 @@ class ContextDefinition(Definition[T]):
         return self._instance.get()
 
 
+type InjectorDefiner[T, **P] = Callable[[Callable[P, Iterator[T]]], InjectorFactory[T, P]]
+type InjectorFactory[T, **P] = Callable[P, ContextManager[T]]
+type InjectorPlugin[T] = Callable[[Requirement[T], tuple[Any, ...] | None, dict[str, Any] | None], T]
+
+
 class Injector:
-    def __init__(self, plugins: List[Callable] | None = None) -> None:
+    def __init__(self, plugins: list[InjectorPlugin[Any]] | None = None) -> None:
         self._plugins = plugins
-        self._definitions: List[Definition[Any]] = []
+        self._definitions: list[Definition[Any]] = []
 
-    def define(self,
-               scope: Literal['context', 'singleton'],
-               name: str | None = None) -> Callable[[Callable[P, Iterator[T]]], Callable[P, ContextManager[T]]]:
+    def define[T, **P](self, scope: str, name: str | None = None) -> InjectorDefiner[T, P]:
+        assert scope in Definition.register
 
-        def definer(function: Callable[P, Iterator[T]]) -> Callable[P, ContextManager[T]]:
+        def definer(function: Callable[P, Iterator[T]]) -> InjectorFactory[T, P]:
             factory = contextmanager(function)
 
-            for cls in Definition.classes:
-                if cls.scope == scope:
-                    self._definitions.append(cls(
-                        signature=get_signature(function),
-                        factory=factory,
-                        name=name,
-                    ))
-                    break
+            self._definitions.append(
+                Definition.register[scope](
+                    signature=signature(function),
+                    factory=factory,
+                    name=name,
+                )
+            )
 
             return factory
 
@@ -200,10 +200,10 @@ class Injector:
 
         self.release(release_factories, None, None, None)
 
-    def injectable(self, function: Callable[P, T]) -> Callable[P, T]:
-        return update_wrapper(Injectable(self, function), function)
+    def injectable[T, **P](self, function: Callable[P, T]) -> Callable[P, T]:
+        return Injectable(self, function)
 
-    def _get(self, requirement: Requirement[T]) -> T:
+    def _get[T](self, requirement: Requirement[T]) -> T:
         definition = self._get_definition(requirement)
 
         if not definition:
@@ -216,9 +216,14 @@ class Injector:
             if not definition.instance:
                 definition.enter()
 
+        assert definition.instance, 'Unknown behaviour'
+
         return definition.instance
 
-    def _get_extra(self, requirement: Requirement[T], args=None, kwargs=None) -> T:
+    def _get_extra[T](self,
+                      requirement: Requirement[T],
+                      args: tuple[Any, ...] | None = None,
+                      kwargs: dict[str, Any] | None = None) -> T | None:
         for plugin in self._plugins or []:
             with suppress(LookupError):
                 value = plugin(requirement, args, kwargs)
@@ -226,29 +231,31 @@ class Injector:
                 if value:
                     return value
 
-        if requirement.default is not void:
+        if requirement.default is not missing:
             return requirement.default
 
         raise LookupError()
 
-    def _get_definition(self, requirement: Requirement[T]) -> Definition[T] | None:
-        assert requirement.type
+    def _get_definition[T](self, requirement: Requirement[T]) -> Definition[T] | None:
+        assert requirement.cls
 
         for definition in self._definitions:
             if requirement.issuperclass(definition.type) and (
                     definition._name is None or definition._name == requirement.name):
-                return cast(Definition[T], definition)
+                return definition
 
         return None
 
 
-class Injectable(Generic[T]):
+class Injectable[T, **P]:
     def __init__(self, injector: Injector, function: Callable[P, T]) -> None:
         self._injector = injector
         self._function = function
-        self._signature = get_signature(function)
+        self._signature = signature(function)
 
-    def __call__(self, *args: Any, **kwargs: Any) -> T:
+        update_wrapper(self, function)
+
+    def __call__(self, *args: P.args, **kwargs: P.kwargs) -> T:
         for position, parameter in enumerate(self._signature.parameters.values()):
             requirement = parameter.default
 
@@ -257,21 +264,23 @@ class Injectable(Generic[T]):
 
             requirement = replace(
                 requirement,
-                type=requirement.type or parameter.annotation,
+                cls=requirement.cls or parameter.annotation,
                 name=requirement.name or parameter.name,
             )
 
-            arg = void
+            requirement = cast(Requirement[T], requirement)
+
+            arg = missing
 
             if parameter.kind in [Parameter.POSITIONAL_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
                 with suppress(IndexError):
                     arg = args[position]
 
-            if arg is void and parameter.kind in [Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
+            if arg is missing and parameter.kind in [Parameter.KEYWORD_ONLY, Parameter.POSITIONAL_OR_KEYWORD]:
                 with suppress(KeyError):
                     arg = kwargs[parameter.name]
 
-            if arg is void:
+            if arg is missing:
                 try:
                     value = self._injector._get(requirement)
                 except LookupError:
@@ -281,5 +290,5 @@ class Injectable(Generic[T]):
 
         return self._function(*args, **kwargs)
 
-    def __get__(self, instance, cls) -> Callable[P, T]:
-        return partial(self, instance if instance else cls)
+    def __get__(self, instance: Any | None, cls: type[Any]) -> Callable[..., T]:
+        return partial(self, instance or cls)
